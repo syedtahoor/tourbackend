@@ -181,5 +181,35 @@ router.post('/logout', async (req, res) => {
     }
 });
 
+/* -----------------  ✅ DELETE AGENCY  -----------------
+   DELETE /api/agencies/agencies/:id
+   Admin only — deletes agency + all its tokens in parallel
+-------------------------------------------------- */
+router.delete('/agencies/:id', authMiddleware, async (req, res) => {
+    try {
+        if (req.user.userType !== 'Admin') {
+            return res.status(403).json({ message: 'Only admins can delete agencies' });
+        }
+
+        const { id } = req.params;
+
+        const [deletedAgency] = await Promise.all([
+            Agency.findByIdAndDelete(id).select('-password').lean(),
+            Token.deleteMany({ userId: id, userType: 'Agency' })
+        ]);
+
+        if (!deletedAgency) {
+            return res.status(404).json({ message: 'Agency not found' });
+        }
+
+        res.status(200).json({
+            message: 'Agency deleted successfully',
+            agency: deletedAgency
+        });
+
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
 
 module.exports = router;

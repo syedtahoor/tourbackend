@@ -20,7 +20,7 @@ const tourSchema = new mongoose.Schema({
     // 🔹 Agency Reference
     agencyId: {
         type: mongoose.Schema.Types.ObjectId,
-        ref: 'Agency',     // your Agency model name
+        ref: 'Agency',     
         required: true
     },
 

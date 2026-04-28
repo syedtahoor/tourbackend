@@ -5,7 +5,7 @@ const Token = require('../../models/Token');
 const jwt = require('jsonwebtoken');
 const authMiddleware = require('../../middlewares/authMiddleware');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'your_jwt_secret_key';
+const JWT_SECRET = process.env.JWT_SECRET;
 
 // GET USERS
 router.get('/getusers', authMiddleware, async (req, res) => {
@@ -184,6 +184,145 @@ router.post('/logout', async (req, res) => {
     } catch (error) {
         console.error(error);
         res.status(500).json({ error: 'Server error' });
+    }
+});
+
+// ─────────────────────────────────────────────
+// ✅ DELETE USER  (Admin only)
+// DELETE /api/users/deleteuser/:id
+// ─────────────────────────────────────────────
+router.delete('/deleteuser/:id', authMiddleware, async (req, res) => {
+    try {
+        if (req.user.userType !== 'Admin') {
+            return res.status(403).json({ message: 'Only admins can delete users' });
+        }
+ 
+        const { id } = req.params;
+ 
+        // Delete user + their tokens in parallel for max speed
+        const [deletedUser] = await Promise.all([
+            User.findByIdAndDelete(id).select('-password').lean(),
+            Token.deleteMany({ userId: id, userType: 'User' })
+        ]);
+ 
+        if (!deletedUser) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+ 
+        res.status(200).json({
+            message: 'User deleted successfully',
+            user: deletedUser
+        });
+ 
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+ 
+// ─────────────────────────────────────────────
+// ✅ EDIT USER  (Admin only)
+// PUT /api/users/edituser/:id
+// Updatable fields: name, email, phone
+// ─────────────────────────────────────────────
+router.put('/edituser/:id', authMiddleware, async (req, res) => {
+    try {
+        if (req.user.userType !== 'Admin') {
+            return res.status(403).json({ message: 'Only admins can edit users' });
+        }
+ 
+        const { id } = req.params;
+        const { name, email, phone } = req.body;
+ 
+        // Build only the fields that were actually sent
+        const updateFields = {};
+        if (name)  updateFields.name  = name.trim();
+        if (email) updateFields.email = email.toLowerCase().trim();
+        if (phone) updateFields.phone = phone;
+ 
+        if (Object.keys(updateFields).length === 0) {
+            return res.status(400).json({ message: 'No fields provided to update' });
+        }
+ 
+        // If email is being changed, check it's not already taken by another user
+        if (updateFields.email) {
+            const emailExists = await User.findOne({
+                email: updateFields.email,
+                _id: { $ne: id }          // exclude current user
+            }).lean();
+ 
+            if (emailExists) {
+                return res.status(400).json({ message: 'Email already in use by another user' });
+            }
+        }
+ 
+        // findByIdAndUpdate with {new: true} returns the updated doc in one round-trip
+        const updatedUser = await User.findByIdAndUpdate(
+            id,
+            { $set: updateFields },
+            { new: true, runValidators: true }
+        ).select('-password').lean();
+ 
+        if (!updatedUser) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+ 
+        res.status(200).json({
+            message: 'User updated successfully',
+            user: updatedUser
+        });
+ 
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+ 
+// ─────────────────────────────────────────────
+// ✅ CHANGE USER STATUS  (Admin only)
+// PATCH /api/users/changestatus/:id
+// Body: { status: "active" | "inactive" | "suspend" }
+// ─────────────────────────────────────────────
+router.patch('/changestatus/:id', authMiddleware, async (req, res) => {
+    try {
+        if (req.user.userType !== 'Admin') {
+            return res.status(403).json({ message: 'Only admins can change user status' });
+        }
+ 
+        const { id } = req.params;
+        const { status } = req.body;
+ 
+        const VALID_STATUSES = ['active', 'inactive', 'suspend'];
+        if (!status || !VALID_STATUSES.includes(status)) {
+            return res.status(400).json({
+                message: `Invalid status. Must be one of: ${VALID_STATUSES.join(', ')}`
+            });
+        }
+ 
+        // If suspending/deactivating → also invalidate all tokens (force logout)
+        const updatePromises = [
+            User.findByIdAndUpdate(
+                id,
+                { $set: { status } },
+                { new: true }
+            ).select('-password').lean()
+        ];
+ 
+        if (status === 'suspend' || status === 'inactive') {
+            updatePromises.push(Token.deleteMany({ userId: id, userType: 'User' }));
+        }
+ 
+        const [updatedUser] = await Promise.all(updatePromises);
+ 
+        if (!updatedUser) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+ 
+        res.status(200).json({
+            message: `User status changed to '${status}' successfully`,
+            user: updatedUser
+        });
+ 
+    } catch (error) {
+        res.status(500).json({ error: error.message });
     }
 });
 

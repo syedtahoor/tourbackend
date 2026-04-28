@@ -312,7 +312,7 @@ router.get('/getalltours', async (req, res) => {
 // Get a single tour by ID
 router.get('/gettour/:id', async (req, res) => {
     try {
-        const tourId = req.params.id;  
+        const tourId = req.params.id;
 
         const tour = await Tour.findById(tourId)
             .populate('agencyId', 'agencyUsername totalRatings');
@@ -324,6 +324,54 @@ router.get('/gettour/:id', async (req, res) => {
         res.status(200).json({
             message: "Tour fetched successfully",
             tour
+        });
+
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/* -----------------  ✅ UPDATE TOUR STATUS (Admin only)  -----------------
+   PATCH /api/tours/status/:id
+   Body: { status: "draft" | "active" | "inactive" }
+   Admin can change any tour's status
+------------------------------------------------------------------- */
+router.patch('/status/:id', authMiddleware, async (req, res) => {
+    try {
+        // Only Admin allowed
+        if (req.user.userType !== 'Admin') {
+            return res.status(403).json({ message: 'Only admins can update tour status' });
+        }
+
+        const { id } = req.params;
+        const { status } = req.body;
+
+        const VALID_STATUSES = ['draft', 'active', 'inactive'];
+        if (!status || !VALID_STATUSES.includes(status)) {
+            return res.status(400).json({
+                message: `Invalid status. Must be one of: ${VALID_STATUSES.join(', ')}`
+            });
+        }
+
+        const updatedTour = await Tour.findByIdAndUpdate(
+            id,
+            { $set: { status } },
+            { new: true, runValidators: true }
+        )
+            .populate('agencyId', 'agencyUsername emailAddress')
+            .lean();
+
+        if (!updatedTour) {
+            return res.status(404).json({ message: 'Tour not found' });
+        }
+
+        // Rename agencyId → tourBy for consistency
+        updatedTour.tourBy = updatedTour.agencyId;
+        delete updatedTour.agencyId;
+
+        res.status(200).json({
+            message: `Tour status updated to '${status}' successfully`,
+            tour: updatedTour
         });
 
     } catch (error) {
